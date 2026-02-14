@@ -1,0 +1,7 @@
+{
+  "name": "Burnout Lab v3 - Japan Retreat",
+  "description": "A science-based wellbeing retreat for leaders in Kochi, Japan. Featuring 3D-like aesthetics, premium typography, and responsive design.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
