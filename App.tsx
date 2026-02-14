@@ -128,16 +128,19 @@ const HeroBackground = React.memo(({ videoSrc, posterSrc }: { videoSrc: string; 
         const progress = Math.min(scrollY / height, 1);
         
         // Parallax Y movement (moves slower than scroll)
-        const translateY = scrollY * 0.4;
+        const translateY = scrollY * 0.5; // Increased speed for better separation
         
-        // Subtle 3D tilt: Rotates top away slightly as you scroll down
-        const rotateX = progress * 8; 
+        // 3D tilt: Rotates top away slightly as you scroll down
+        // Increased angle for more visible 3D effect
+        const rotateX = progress * 12; // Increased from 10 to 12 degrees
         
         // Scale to maintain coverage and add "zoom" depth
-        const scale = 1.1 + (progress * 0.05); 
+        // Increased base scale and growth factor to prevent edges showing during stronger tilt
+        const scale = 1.15 + (progress * 0.12); 
         
         // Apply transform via direct DOM manipulation for performance
-        containerRef.current.style.transform = `translate3d(0, ${translateY}px, 0) scale(${scale}) perspective(1000px) rotateX(${rotateX}deg)`;
+        // Perspective is handled by parent container for better depth handling
+        containerRef.current.style.transform = `translate3d(0, ${translateY}px, 0) scale(${scale}) rotateX(${rotateX}deg)`;
       }
       
       rafId = requestAnimationFrame(animate);
@@ -148,11 +151,14 @@ const HeroBackground = React.memo(({ videoSrc, posterSrc }: { videoSrc: string; 
   }, []);
 
   return (
-    <div className="absolute inset-0 z-0 w-full h-full overflow-hidden bg-stone-900">
+    <div 
+      className="absolute inset-0 z-0 w-full h-full overflow-hidden bg-stone-900"
+      style={{ perspective: '1000px' }} // Tighter perspective for stronger 3D feel
+    >
       <div 
         ref={containerRef}
-        className="relative w-full h-full will-change-transform origin-center"
-        style={{ transform: 'scale(1.1)' }} // Initial state
+        className="relative w-full h-full will-change-transform"
+        style={{ transform: 'scale(1.15)', transformOrigin: 'center 30%' }} // Adjusted initial scale
       >
         {/* Poster Image - Always present as fallback and initial state */}
         <img 
@@ -533,6 +539,87 @@ const ModalOverlay: React.FC<{
   );
 };
 
+const CursorTrail: React.FC = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const points = useRef<{x: number; y: number; age: number}[]>([]);
+  const isMobile = useIsMobile();
+
+  useEffect(() => {
+    if (isMobile) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    
+    const handleResize = () => {
+       width = window.innerWidth;
+       height = window.innerHeight;
+       canvas.width = width;
+       canvas.height = height;
+    };
+    
+    handleResize();
+    window.addEventListener('resize', handleResize);
+
+    const handleMouseMove = (e: MouseEvent) => {
+      points.current.push({ x: e.clientX, y: e.clientY, age: 0 });
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+
+    let animationFrameId: number;
+
+    const render = () => {
+      ctx.clearRect(0, 0, width, height);
+      
+      // Draw trails
+      if (points.current.length > 1) {
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        
+        for (let i = 0; i < points.current.length - 1; i++) {
+          const p1 = points.current[i];
+          const p2 = points.current[i+1];
+          
+          const maxAge = 20;
+          const life = 1 - (p1.age / maxAge);
+          
+          if (life > 0) {
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            // Brand color #e11d48 (225, 29, 72)
+            ctx.strokeStyle = `rgba(225, 29, 72, ${life * 0.4})`; 
+            ctx.lineWidth = life * 6;
+            ctx.stroke();
+          }
+        }
+      }
+      
+      // Update logic
+      points.current.forEach(p => p.age += 1);
+      points.current = points.current.filter(p => p.age < 20);
+      
+      animationFrameId = requestAnimationFrame(render);
+    };
+    
+    render();
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('mousemove', handleMouseMove);
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [isMobile]);
+
+  if (isMobile) return null;
+  // z-[200] to sit above standard UI elements but below Confetti (z-300)
+  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-[200]" />;
+};
+
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -568,6 +655,7 @@ export default function App() {
     <div className={`min-h-screen font-sans transition-colors duration-500 ${darkMode ? 'dark' : ''}`}>
       <div className="bg-stone-50 dark:bg-stone-950 min-h-screen text-stone-900 dark:text-stone-100">
         <Confetti />
+        <CursorTrail />
         <VoiceAssistant show={true} />
 
         {/* Navigation */}
