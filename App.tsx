@@ -4,29 +4,10 @@ import {
   Feather, Send, FileText, Activity, Loader2, Mic, Sparkles, Quote, AlertCircle, Copy, MessageSquare, Gift, FileDown,
   Smartphone, ExternalLink
 } from 'lucide-react';
+import { GoogleGenAI, Modality } from "@google/genai";
+import { TG_CONFIG, ASSETS } from './config';
 
 // --- STATIC DATA ---
-
-const TG_CONFIG = {
-  TOKEN: "8394461945:AAEPNj0xw9UKweOgBwAGWSAMGBZoahvafTg",
-  CHAT_ID: "-1003882096815",
-  THREAD_ID: 5
-};
-
-const ASSETS = {
-  PDF: "https://storage.googleapis.com/uspeshnyy-projects/burnout/Kochi%20Sakura%20-%20Burnout%20Bootcamp%20(April%202026).pdf",
-  VIDEO_BG: "https://storage.googleapis.com/uspeshnyy-projects/burnout/hero.mp4",
-  VIDEO_MOBILE: "https://storage.googleapis.com/uspeshnyy-projects/burnout/hero_m.mp4",
-  FILM_VIDEO: "https://storage.googleapis.com/uspeshnyy-projects/burnout/kochi.mp4",
-  ABOUT_IMG: "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2070&auto=format&fit=crop",
-  COACHES: [
-    "https://storage.googleapis.com/uspeshnyy-projects/burnout/aksinia.jpg",
-    "https://storage.googleapis.com/uspeshnyy-projects/burnout/Juan.jpg",
-    "https://storage.googleapis.com/uspeshnyy-projects/burnout/Daniel.jpg",
-    "https://storage.googleapis.com/uspeshnyy-projects/burnout/Shane.jpg",
-    "https://storage.googleapis.com/uspeshnyy-projects/burnout/Anastasia.jpg"
-  ]
-};
 
 const TRANSLATIONS = {
   EN: {
@@ -104,7 +85,7 @@ const TRANSLATIONS = {
     download: {
       title: "Explore the Details",
       desc: "Download the full brochure with detailed itinerary and scientific basis.",
-      button: "Download PDF (12MB)"
+      button: "Download PDF (19MB)"
     },
     modal: {
       title: "Start Recovery",
@@ -220,7 +201,6 @@ const Reveal: React.FC<{ children: React.ReactNode; delay?: number; className?: 
   return (
     <div 
       ref={ref as any}
-      // Added will-change-transform for optimized compositing
       className={`transition-all duration-[1000ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] will-change-transform ${className}`}
       style={{ 
         opacity: isVisible ? 1 : 0, 
@@ -248,14 +228,9 @@ const ParallaxImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => 
         const rect = container.getBoundingClientRect();
         const viewportHeight = window.innerHeight;
         
-        // Check if visible
         if (rect.top < viewportHeight && rect.bottom > 0) {
-          // Calculate distance from center for subtle parallax
           const distanceFromCenter = rect.top + rect.height / 2 - viewportHeight / 2;
-          
-          // Parallax Factor (0.08 is subtle)
           const y = distanceFromCenter * 0.08;
-          
           wrapper.style.transform = `translateY(${y}px)`;
         }
       }
@@ -287,6 +262,7 @@ const ParallaxImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => 
 const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
   const [isActive, setIsActive] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
   const audioRefs = useRef<{ inputCtx: AudioContext | null; outputCtx: AudioContext | null; sources: Set<AudioBufferSourceNode> }>({
@@ -301,15 +277,13 @@ const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
     if (audioRefs.current.outputCtx) audioRefs.current.outputCtx.close();
     audioRefs.current.inputCtx = null; audioRefs.current.outputCtx = null;
     nextStartTimeRef.current = 0;
+    setIsSpeaking(false);
   };
 
   const connect = async () => {
     if (!process.env.API_KEY) { setError("API Key missing"); return; }
     setIsConnecting(true); setError(null);
     try {
-      // Dynamic import to avoid loading heavy SDK on initial page load
-      const { GoogleGenAI, Modality } = await import("@google/genai");
-      
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const inputCtx = new AudioContext({ sampleRate: 16000 });
@@ -321,7 +295,7 @@ const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         config: { 
           responseModalities: [Modality.AUDIO], 
-          systemInstruction: "You are the Burnout Lab assistant. Professional and scientific. Keep it brief. Help users with information about the Burnout Bootcamp retreat in Japan." 
+          systemInstruction: "You are the Burnout Lab assistant. Professional, empathetic, and scientific. Keep it brief. Help users with information about the Burnout Bootcamp retreat in Japan." 
         },
         callbacks: {
           onopen: () => {
@@ -334,13 +308,14 @@ const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
             };
             source.connect(processor); processor.connect(inputCtx.destination);
           },
-          onmessage: async (msg: any) => { // Type cast to any to support dynamic import
+          onmessage: async (msg: any) => {
             if (msg.serverContent?.interrupted) {
               for (const source of audioRefs.current.sources.values()) {
                 try { source.stop(); } catch {}
               }
               audioRefs.current.sources.clear();
               nextStartTimeRef.current = 0;
+              setIsSpeaking(false);
             }
 
             const base64 = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
@@ -348,11 +323,17 @@ const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
               const buffer = await decodeAudioData(decodeBase64(base64), outputCtx, 24000, 1);
               const source = outputCtx.createBufferSource();
               source.buffer = buffer; source.connect(outputCtx.destination);
-              source.addEventListener('ended', () => { audioRefs.current.sources.delete(source); });
+              
+              source.addEventListener('ended', () => { 
+                audioRefs.current.sources.delete(source); 
+                if (audioRefs.current.sources.size === 0) setIsSpeaking(false);
+              });
+              
               nextStartTimeRef.current = Math.max(outputCtx.currentTime, nextStartTimeRef.current);
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += buffer.duration;
               audioRefs.current.sources.add(source);
+              setIsSpeaking(true);
             }
           },
           onerror: () => { setError("Connection error"); setIsActive(false); setIsConnecting(false); cleanup(); },
@@ -370,29 +351,138 @@ const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
         <button 
           onClick={connect}
           aria-label="Ask AI Assistant"
-          className="w-16 h-16 bg-brand-600 hover:bg-brand-700 text-white rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 group relative overflow-hidden animate-pulse-glow"
+          className="w-16 h-16 bg-brand-600 hover:bg-brand-700 text-white rounded-full flex items-center justify-center transition-all hover:scale-110 active:scale-95 group relative shadow-2xl"
         >
+          <div className="absolute inset-0 bg-brand-500 rounded-full animate-ping opacity-20 duration-1000" />
           <div className="absolute inset-0 bg-white/20 scale-0 group-hover:scale-150 transition-transform duration-500 rounded-full blur-xl" />
-          <div className="absolute inset-0 animate-ping bg-brand-600 opacity-20 rounded-full" />
-          {isConnecting ? <Loader2 className="animate-spin" /> : <Sparkles className="group-hover:animate-pulse z-10" />}
+          <div className="relative z-10">
+            {isConnecting ? <Loader2 className="animate-spin" /> : <Sparkles className="group-hover:animate-pulse" />}
+          </div>
         </button>
       ) : (
-        <div className="bg-white dark:bg-stone-900 backdrop-blur-xl border border-stone-200 dark:border-stone-800 p-6 rounded-[2rem] shadow-2xl w-64 text-center animate-fade-in-up">
-           <div className="w-12 h-12 bg-brand-100 dark:bg-brand-900/30 text-brand-600 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-             <Mic size={24} />
+        <div className="bg-white/90 dark:bg-stone-900/90 backdrop-blur-2xl border border-stone-200 dark:border-stone-800 p-8 rounded-[2.5rem] shadow-2xl w-80 flex flex-col items-center animate-fade-in-up relative overflow-hidden">
+           <div className={`absolute inset-0 transition-colors duration-1000 ${isSpeaking ? 'bg-indigo-500/5' : 'bg-brand-500/5'}`} />
+           <div className="relative w-24 h-24 flex items-center justify-center mb-6">
+             <div className={`relative z-10 w-16 h-16 rounded-full flex items-center justify-center transition-all duration-500 shadow-lg ${isSpeaking ? 'bg-indigo-600 shadow-indigo-500/30' : 'bg-brand-600 shadow-brand-500/30'}`}>
+               {isSpeaking ? <Activity className="text-white animate-pulse" size={28} /> : <Mic className="text-white" size={28} />}
+             </div>
+             {!isSpeaking && (
+               <>
+                 <div className="absolute inset-0 bg-brand-500 rounded-full animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite] opacity-20" />
+                 <div className="absolute inset-0 bg-brand-500 rounded-full animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite] opacity-10 delay-75" style={{ animationDelay: '0.5s' }} />
+               </>
+             )}
+             {isSpeaking && (
+                <>
+                  <div className="absolute inset-0 border-2 border-indigo-500 rounded-full animate-[ping_1.5s_cubic-bezier(0,0,0.2,1)_infinite] opacity-30" />
+                  <div className="absolute inset-0 border border-indigo-400 rounded-full animate-[ping_1.5s_cubic-bezier(0,0,0.2,1)_infinite] opacity-20" style={{ animationDelay: '0.2s' }} />
+                  <div className="absolute inset-0 bg-indigo-500/20 rounded-full animate-pulse" />
+                </>
+             )}
            </div>
-           <p className="text-sm font-medium dark:text-white mb-4">I'm listening...</p>
-           <button onClick={() => { setIsActive(false); cleanup(); }} className="w-full py-2 bg-stone-100 dark:bg-stone-800 rounded-xl text-xs font-bold hover:bg-brand-50 transition-colors">End Session</button>
+           <div className="text-center relative z-10 space-y-2">
+             <h4 className={`text-lg font-serif font-bold transition-colors duration-300 ${isSpeaking ? 'text-indigo-600 dark:text-indigo-400' : 'text-brand-600 dark:text-brand-500'}`}>
+               {isSpeaking ? "Speaking..." : "Listening..."}
+             </h4>
+             <p className="text-xs text-stone-500 dark:text-stone-400 font-medium">
+               {isSpeaking ? "BurnoutBot AI is replying" : "Ask me anything about the retreat"}
+             </p>
+           </div>
+           <button onClick={() => { setIsActive(false); cleanup(); }} className="mt-6 px-6 py-2 bg-stone-100 dark:bg-stone-800 rounded-full text-xs font-bold hover:bg-stone-200 dark:hover:bg-stone-700 transition-colors w-full">End Session</button>
+           <button onClick={() => { setIsActive(false); cleanup(); }} aria-label="Close" className="absolute top-4 right-4 text-stone-400 hover:text-stone-900 dark:hover:text-white transition-colors">
+             <X size={16} />
+           </button>
         </div>
       )}
-      {error && <div className="absolute bottom-full right-0 mb-4 bg-red-500 text-white text-[10px] px-3 py-1 rounded-full whitespace-nowrap">{error}</div>}
+      {error && <div className="absolute bottom-full right-0 mb-4 bg-red-500 text-white text-[10px] px-3 py-1 rounded-full whitespace-nowrap shadow-lg animate-fade-in-up">{error}</div>}
+    </div>
+  );
+};
+
+const Confetti: React.FC = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    const particles: any[] = [];
+    const colors = ['#e11d48', '#fb7185', '#fda4af', '#fff1f2', '#FFD700', '#F43F5E'];
+
+    for (let i = 0; i < 150; i++) {
+      particles.push({
+        x: width / 2, y: height / 2, w: Math.random() * 8 + 4, h: Math.random() * 8 + 4,
+        vx: (Math.random() - 0.5) * 25, vy: (Math.random() - 0.5) * 25 - 5,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        gravity: 0.4, drag: 0.95, rotation: Math.random() * 360, rotationSpeed: (Math.random() - 0.5) * 15
+      });
+    }
+
+    let animationId: number;
+    const render = () => {
+      ctx.clearRect(0, 0, width, height);
+      particles.forEach((p) => {
+        p.x += p.vx; p.y += p.vy; p.vy += p.gravity; p.vx *= p.drag; p.vy *= p.drag; p.rotation += p.rotationSpeed;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate((p.rotation * Math.PI) / 180);
+        ctx.fillStyle = p.color; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h); ctx.restore();
+      });
+      animationId = requestAnimationFrame(render);
+    };
+
+    render();
+    const resize = () => {
+      width = window.innerWidth; height = window.innerHeight; canvas.width = width; canvas.height = height;
+    };
+    window.addEventListener('resize', resize);
+    return () => { cancelAnimationFrame(animationId); window.removeEventListener('resize', resize); };
+  }, []);
+
+  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-[300]" />;
+};
+
+const ModalOverlay: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  contentClassName?: string;
+  backdropClassName?: string;
+}> = ({ isOpen, onClose, children, contentClassName = "", backdropClassName = "bg-black/60 backdrop-blur-xl" }) => {
+  const [shouldRender, setShouldRender] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setShouldRender(true);
+      requestAnimationFrame(() => { requestAnimationFrame(() => setIsAnimating(true)); });
+    } else {
+      setIsAnimating(false);
+      const timer = setTimeout(() => setShouldRender(false), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen]);
+
+  if (!shouldRender) return null;
+
+  return (
+    <div className={`fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6 transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isAnimating ? 'opacity-100 visible' : 'opacity-0 invisible'}`}>
+      <div className={`absolute inset-0 transition-opacity duration-500 ${backdropClassName}`} onClick={onClose} />
+      <div className={`relative transition-all duration-500 ease-[cubic-bezier(0.19,1,0.22,1)] ${isAnimating ? 'scale-100 translate-y-0 opacity-100' : 'scale-95 translate-y-8 opacity-0'} ${contentClassName}`}>
+        {children}
+      </div>
     </div>
   );
 };
 
 // --- MAIN APPLICATION ---
 
-const BurnoutLanding = () => {
+export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isVideoOpen, setIsVideoOpen] = useState(false);
@@ -401,12 +491,12 @@ const BurnoutLanding = () => {
   const [refNumber, setRefNumber] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [telegramUrl, setTelegramUrl] = useState("https://t.me/BurnoutQuizBot?start=landingv2");
 
   const scrollY = useScrollPos();
   const t = TRANSLATIONS.EN;
 
   useEffect(() => {
-    // Simulated loading time to ensure critical assets have a moment, but keep it snappy
     const timer = setTimeout(() => setIsLoading(false), 1500);
     return () => clearTimeout(timer);
   }, []);
@@ -419,6 +509,12 @@ const BurnoutLanding = () => {
       document.body.classList.remove('menu-open');
     }
   }, [isDarkMode, isMenuOpen, isModalOpen, isVideoOpen]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromParam = params.get('from') || 'landingv2';
+    setTelegramUrl(`https://t.me/BurnoutQuizBot?start=${fromParam}`);
+  }, []);
 
   const generateRef = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -437,7 +533,22 @@ const BurnoutLanding = () => {
     const generatedRef = generateRef();
     setRefNumber(generatedRef);
     
-    const msg = `<b>New Lead:</b>\nName: ${data.get('user-name')}\nPhone: ${data.get('user-phone')}\nAcc: ${data.get('accommodation-type')}\nRef: ${generatedRef}`;
+    const params = new URLSearchParams(window.location.search);
+    const fromVal = params.get('from');
+    const utmSource = params.get('utm_source');
+    const utmMedium = params.get('utm_medium');
+    const utmCampaign = params.get('utm_campaign');
+    const utmTerm = params.get('utm_term');
+    const utmContent = params.get('utm_content');
+
+    let msg = `<b>New Lead:</b>\nName: ${data.get('user-name')}\nPhone: ${data.get('user-phone')}\nAcc: ${data.get('accommodation-type')}\nRef: ${generatedRef}`;
+
+    if (fromVal) msg += `\nFrom: ${fromVal}`;
+    if (utmSource) msg += `\nSource: ${utmSource}`;
+    if (utmMedium) msg += `\nMedium: ${utmMedium}`;
+    if (utmCampaign) msg += `\nCampaign: ${utmCampaign}`;
+    if (utmTerm) msg += `\nTerm: ${utmTerm}`;
+    if (utmContent) msg += `\nContent: ${utmContent}`;
 
     try {
       const res = await fetch(`https://api.telegram.org/bot${TG_CONFIG.TOKEN}/sendMessage`, {
@@ -475,7 +586,6 @@ const BurnoutLanding = () => {
             Burnout<span className="text-brand-600 italic">Lab</span>
           </a>
           
-          {/* Desktop Menu */}
           <div className="hidden md:flex items-center space-x-10">
             {['about', 'schedule', 'team', 'pricing'].map(item => (
               <a key={item} href={`#${item}`} className="text-sm font-medium dark:text-stone-300 hover:text-brand-600 transition-colors capitalize tracking-wide">{item}</a>
@@ -492,7 +602,6 @@ const BurnoutLanding = () => {
             </button>
           </div>
 
-          {/* Mobile Menu Toggle */}
           <div className="md:hidden flex items-center space-x-4 z-[110]">
             <button 
               onClick={() => setIsDarkMode(!isDarkMode)} 
@@ -512,26 +621,16 @@ const BurnoutLanding = () => {
           </div>
         </div>
 
-        {/* Improved Fullscreen Glassmorphism Mobile Menu */}
-        <div 
-          className={`fixed inset-0 z-[105] transition-all duration-700 ease-out-expo ${isMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        >
-          {/* Blur Backdrop */}
-          <div className={`absolute inset-0 bg-white/40 dark:bg-stone-950/60 backdrop-blur-2xl transition-all duration-700 ${isMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-110'}`} />
-          
+        <div className={`fixed inset-0 z-[105] transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${isMenuOpen ? 'opacity-100 visible' : 'opacity-0 invisible delay-300'}`}>
+          <div className={`absolute inset-0 bg-stone-50/80 dark:bg-stone-950/80 backdrop-blur-[20px] backdrop-saturate-150 transition-all duration-700 ease-out ${isMenuOpen ? 'opacity-100' : 'opacity-0'}`} />
+          <div className={`absolute top-[-20%] right-[-10%] w-[500px] h-[500px] bg-brand-400/20 rounded-full blur-[100px] animate-pulse-slow transition-all duration-1000 ${isMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-110'}`} />
+          <div className={`absolute bottom-[-10%] left-[-20%] w-[600px] h-[600px] bg-indigo-500/10 rounded-full blur-[120px] animate-pulse-slow transition-all duration-1000 delay-300 ${isMenuOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-110'}`} />
+
           <div className="relative flex flex-col items-center justify-center h-full px-6 space-y-12 overflow-y-auto pt-20">
             <div className="flex flex-col space-y-8 text-center">
               {['about', 'schedule', 'team', 'pricing'].map((item, idx) => (
-                <div 
-                  key={item} 
-                  className={`transition-all duration-700 ease-out-expo ${isMenuOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-12'}`}
-                  style={{ transitionDelay: `${idx * 100}ms` }}
-                >
-                  <a 
-                    href={`#${item}`} 
-                    onClick={() => setIsMenuOpen(false)} 
-                    className="text-5xl font-serif dark:text-white capitalize tracking-tighter hover:text-brand-600 transition-all block relative group"
-                  >
+                <div key={item} className={`transition-all duration-700 ease-[cubic-bezier(0.19,1,0.22,1)] ${isMenuOpen ? 'opacity-100 translate-y-0 blur-0' : 'opacity-0 translate-y-12 blur-md'}`} style={{ transitionDelay: isMenuOpen ? `${150 + idx * 100}ms` : '0ms' }}>
+                  <a href={`#${item}`} onClick={() => setIsMenuOpen(false)} className="text-5xl font-serif dark:text-white capitalize tracking-tighter hover:text-brand-600 transition-all block relative group">
                     <span className="relative z-10">{item}</span>
                     <span className="absolute -inset-x-4 h-px bg-brand-600 bottom-0 scale-x-0 group-hover:scale-x-100 transition-transform duration-500 origin-left" />
                   </a>
@@ -539,14 +638,8 @@ const BurnoutLanding = () => {
               ))}
             </div>
             
-            <div 
-              className={`pt-12 w-full max-w-sm transition-all duration-1000 ease-out-expo ${isMenuOpen ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-20'}`}
-              style={{ transitionDelay: '500ms' }}
-            >
-              <button 
-                onClick={() => { setIsModalOpen(true); setIsMenuOpen(false); }} 
-                className="w-full py-6 bg-brand-600 text-white rounded-[2rem] font-bold shadow-2xl active:scale-95 transition-all text-xl flex items-center justify-center space-x-3 group overflow-hidden relative"
-              >
+            <div className={`pt-12 w-full max-w-sm transition-all duration-1000 ease-[cubic-bezier(0.19,1,0.22,1)] ${isMenuOpen ? 'opacity-100 translate-y-0 blur-0' : 'opacity-0 translate-y-20 blur-md'}`} style={{ transitionDelay: isMenuOpen ? '550ms' : '0ms' }}>
+              <button onClick={() => { setIsModalOpen(true); setIsMenuOpen(false); }} className="w-full py-6 bg-brand-600 text-white rounded-[2rem] font-bold shadow-2xl active:scale-95 transition-all text-xl flex items-center justify-center space-x-3 group overflow-hidden relative">
                 <span className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500" />
                 <Calendar className="relative z-10" />
                 <span className="relative z-10">{t.nav.book}</span>
@@ -557,47 +650,33 @@ const BurnoutLanding = () => {
       </nav>
 
       {/* Hero Section */}
-      <header className="relative h-screen flex flex-col items-center justify-center overflow-hidden">
-        <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover">
-          <source src={ASSETS.VIDEO_MOBILE} media="(max-width: 767px)" type="video/mp4" />
-          <source src={ASSETS.VIDEO_BG} media="(min-width: 768px)" type="video/mp4" />
-        </video>
-        <div className="absolute inset-0 bg-black/45 dark:bg-black/70 z-10" />
+      <header className="relative h-screen flex flex-col items-center justify-center overflow-hidden bg-stone-950">
+        <div className="absolute inset-0 w-full h-full z-0 overflow-hidden">
+             <video autoPlay loop muted playsInline className="w-full h-full object-cover transition-transform duration-75 ease-out will-change-transform" style={{ transform: `scale(${1 + scrollY * 0.0005})` }}>
+              <source src={ASSETS.VIDEO_MOBILE} media="(max-width: 767px)" type="video/mp4" />
+              <source src={ASSETS.VIDEO_BG} media="(min-width: 768px)" type="video/mp4" />
+            </video>
+        </div>
+        <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/60 z-10" />
+        <div className="absolute inset-0 bg-stone-950 z-10 pointer-events-none will-change-[opacity]" style={{ opacity: Math.min(scrollY / (window.innerHeight * 0.7), 1) * 0.9 }} />
         
         <div className="relative z-20 text-center px-6 max-w-4xl pt-16">
           <Reveal direction="down" distance={20} delay={100}>
-            <span className="inline-block px-5 py-2 bg-white/10 backdrop-blur-lg border border-white/20 rounded-full text-white text-[11px] font-bold mb-10 uppercase tracking-[0.2em] shadow-lg">
-              {t.hero.date}
-            </span>
+            <span className="inline-block px-5 py-2 bg-white/10 backdrop-blur-lg border border-white/20 rounded-full text-white text-[11px] font-bold mb-10 uppercase tracking-[0.2em] shadow-lg">{t.hero.date}</span>
           </Reveal>
           <Reveal delay={300} direction="up" distance={30} className="mb-8">
-            <h1 className="text-4xl md:text-8xl font-serif text-white leading-[1.1] tracking-tight drop-shadow-2xl">
-              {t.hero.titlePrefix} <br/><span className="italic text-brand-200 font-light">{t.hero.titleHighlight}</span>
-            </h1>
+            <h1 className="text-4xl md:text-8xl font-serif text-white leading-[1.1] tracking-tight drop-shadow-2xl">{t.hero.titlePrefix} <br/><span className="italic text-brand-200 font-light">{t.hero.titleHighlight}</span></h1>
           </Reveal>
           <Reveal delay={500} direction="up" distance={20} className="mb-14">
-            <p className="text-lg md:text-2xl text-stone-200 font-light max-w-2xl mx-auto leading-relaxed drop-shadow-md">
-              {t.hero.desc}
-            </p>
+            <p className="text-lg md:text-2xl text-stone-200 font-light max-w-2xl mx-auto leading-relaxed drop-shadow-md">{t.hero.desc}</p>
           </Reveal>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-8">
             <Reveal delay={700} direction="up" distance={20}>
-              <button 
-                onClick={() => setIsModalOpen(true)} 
-                className="w-full sm:w-auto px-12 py-5 bg-brand-600 text-white rounded-full font-bold shadow-2xl hover:bg-brand-700 hover:-translate-y-1 active:scale-95 transition-all animate-pulse-glow"
-              >
-                {t.hero.ctaApply}
-              </button>
+              <button onClick={() => setIsModalOpen(true)} className="w-full sm:w-auto px-12 py-5 bg-brand-600 text-white rounded-full font-bold shadow-2xl hover:bg-brand-700 hover:-translate-y-1 active:scale-95 transition-all animate-pulse-glow">{t.hero.ctaApply}</button>
             </Reveal>
             <Reveal delay={850} direction="up" distance={20}>
-              <button 
-                onClick={() => setIsVideoOpen(true)} 
-                className="flex items-center space-x-4 text-white font-medium hover:text-brand-200 transition-all group animate-soft-pulse"
-                style={{ animationDelay: '1s' }}
-              >
-                <span className="w-14 h-14 rounded-full border border-white/30 bg-white/5 backdrop-blur-sm flex items-center justify-center group-hover:bg-white group-hover:text-black transition-all shadow-lg scale-100 group-hover:scale-110">
-                  <Play size={18} fill="currentColor" />
-                </span>
+              <button onClick={() => setIsVideoOpen(true)} className="flex items-center space-x-4 text-white font-medium hover:text-brand-200 transition-all group animate-soft-pulse" style={{ animationDelay: '1s' }}>
+                <span className="w-14 h-14 rounded-full border border-white/30 bg-white/5 backdrop-blur-sm flex items-center justify-center group-hover:bg-white group-hover:text-black transition-all shadow-lg scale-100 group-hover:scale-110"><Play size={18} fill="currentColor" /></span>
                 <span className="text-[12px] font-bold uppercase tracking-wide">{t.hero.watchVideo}</span>
               </button>
             </Reveal>
@@ -605,7 +684,7 @@ const BurnoutLanding = () => {
         </div>
       </header>
 
-      {/* Restored Stats Block Under Hero */}
+      {/* Stats Block */}
       <section className="relative z-30 -mt-16 md:-mt-20 px-6 max-w-7xl mx-auto">
         <Reveal direction="up" distance={40} delay={1400}>
           <div className="bg-white dark:bg-stone-900 rounded-[2.5rem] md:rounded-[4rem] shadow-2xl overflow-hidden border border-stone-100 dark:border-stone-800 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-stone-100 dark:divide-stone-800">
@@ -652,14 +731,10 @@ const BurnoutLanding = () => {
             <div className="rounded-[4rem] overflow-hidden shadow-2xl aspect-[4/5] relative group border-8 border-white dark:border-stone-900">
               <img src={ASSETS.ABOUT_IMG} loading="lazy" decoding="async" alt="Japan Retreat" className="w-full h-full object-cover transition-transform duration-[2000ms] group-hover:scale-110" />
               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-80" />
-              
               <div className="absolute bottom-10 inset-x-8 md:inset-x-12 p-6 md:p-8 bg-black/40 backdrop-blur-md rounded-[2.5rem] border border-white/10 shadow-2xl">
-                <p className="text-white font-serif italic text-xl md:text-2xl text-center leading-relaxed drop-shadow-md">
-                  {t.about.imageQuote}
-                </p>
+                <p className="text-white font-serif italic text-xl md:text-2xl text-center leading-relaxed drop-shadow-md">{t.about.imageQuote}</p>
               </div>
             </div>
-            
             <div className="absolute -bottom-10 -left-6 p-8 bg-white/95 dark:bg-stone-900/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-stone-100 dark:border-stone-800 animate-float z-30">
                <div className="text-[10px] font-bold text-stone-400 tracking-[0.2em] mb-2 uppercase">{t.about.cortisolLevel}</div>
                <div className="text-3xl font-bold text-brand-600 dark:text-brand-500">{t.about.cortisolChange}</div>
@@ -682,13 +757,9 @@ const BurnoutLanding = () => {
             {t.schedule.days.map((d, i) => (
               <Reveal key={i} delay={i * 150}>
                 <div className="p-12 bg-white dark:bg-stone-900 rounded-[3.5rem] h-full border border-stone-100 dark:border-stone-800 hover:border-brand-500/30 transition-all duration-500 group relative overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-2">
-                  <span className="absolute -top-4 -right-2 text-[140px] font-serif font-black text-stone-200/60 dark:text-stone-700/50 leading-none select-none group-hover:text-brand-500/10 transition-colors z-0">
-                    {d.ghost}
-                  </span>
+                  <span className="absolute -top-4 -right-2 text-[140px] font-serif font-black text-stone-200/60 dark:text-stone-700/50 leading-none select-none group-hover:text-brand-500/10 transition-colors z-0">{d.ghost}</span>
                   <div className="relative z-10 space-y-8">
-                    <span className="inline-block px-4 py-1.5 bg-brand-50 dark:bg-brand-900/20 text-[10px] font-bold text-brand-600 tracking-[0.2em] rounded-full uppercase">
-                      {d.day}
-                    </span>
+                    <span className="inline-block px-4 py-1.5 bg-brand-50 dark:bg-brand-900/20 text-[10px] font-bold text-brand-600 tracking-[0.2em] rounded-full uppercase">{d.day}</span>
                     <h3 className="text-2xl font-serif dark:text-white leading-tight group-hover:text-brand-600 transition-colors">{d.title}</h3>
                     <p className="text-sm text-stone-500 dark:text-stone-400 leading-relaxed font-light">{d.desc}</p>
                   </div>
@@ -760,11 +831,10 @@ const BurnoutLanding = () => {
         </div>
       </section>
 
-      {/* Free Lead Magnet Section - Moved here */}
+      {/* Free Lead Magnet Section */}
       <section className="py-32 px-6">
         <Reveal direction="up" distance={60}>
           <div className="max-w-7xl mx-auto bg-gradient-to-br from-[#4b1d8e] via-[#6d1a92] to-[#b61545] rounded-[3rem] md:rounded-[5rem] overflow-hidden shadow-[0_40px_100px_-20px_rgba(75,29,142,0.4)] relative border border-white/10 group">
-            {/* Animated Gradient Orbs */}
             <div className="absolute top-0 right-0 w-96 h-96 bg-brand-500/30 blur-[120px] rounded-full -mr-20 -mt-20 animate-pulse" />
             <div className="absolute bottom-0 left-0 w-80 h-80 bg-indigo-500/20 blur-[100px] rounded-full -ml-20 -mb-20 animate-pulse-slow" />
             
@@ -774,57 +844,34 @@ const BurnoutLanding = () => {
                   <Sparkles size={14} className="text-brand-300" />
                   <span>{t.leadMagnet.badge}</span>
                 </div>
-                <h2 className="text-4xl md:text-7xl font-serif text-white leading-tight tracking-tight">
-                  {t.leadMagnet.title}
-                </h2>
-                <p className="text-xl md:text-2xl text-stone-200/90 font-light leading-relaxed max-w-lg">
-                  {t.leadMagnet.desc}
-                </p>
+                <h2 className="text-4xl md:text-7xl font-serif text-white leading-tight tracking-tight">{t.leadMagnet.title}</h2>
+                <p className="text-xl md:text-2xl text-stone-200/90 font-light leading-relaxed max-w-lg">{t.leadMagnet.desc}</p>
                 <div className="pt-6">
-                  <a 
-                    href="https://t.me" 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center space-x-5 px-10 py-5 bg-white text-[#4b1d8e] rounded-2xl font-bold shadow-2xl hover:bg-stone-100 hover:-translate-y-1 transition-all active:scale-95 group/btn text-lg"
-                  >
+                  <a href={telegramUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center space-x-5 px-10 py-5 bg-white text-[#4b1d8e] rounded-2xl font-bold shadow-2xl hover:bg-stone-100 hover:-translate-y-1 transition-all active:scale-95 group/btn text-lg">
                     <MessageSquare size={22} className="group-hover/btn:scale-110 transition-transform" />
                     <span>{t.leadMagnet.cta}</span>
                   </a>
                 </div>
               </div>
 
-              {/* Telegram Mockup Restored */}
               <div className="relative lg:justify-self-end w-full max-w-[420px]">
                 <div className="bg-[#1c1c1e] rounded-[3rem] p-4 shadow-[0_50px_100px_rgba(0,0,0,0.5)] border-[8px] border-[#2c2c2e] overflow-hidden aspect-[4/5] relative flex flex-col">
-                  {/* Chat Header */}
                   <div className="flex items-center space-x-3 p-3 border-b border-white/5 mb-4">
-                    <div className="w-10 h-10 bg-[#5856d6] rounded-full flex items-center justify-center text-white">
-                      <Brain size={20} />
-                    </div>
+                    <div className="w-10 h-10 bg-[#5856d6] rounded-full flex items-center justify-center text-white"><Brain size={20} /></div>
                     <div>
                       <div className="text-white text-sm font-bold">{t.leadMagnet.botName}</div>
                       <div className="text-[#5856d6] text-[10px] font-medium tracking-wide uppercase">{t.leadMagnet.botStatus}</div>
                     </div>
                   </div>
-
-                  {/* Chat Content */}
                   <div className="flex-grow space-y-6 overflow-hidden">
-                    <div className="bg-[#2c2c2e] text-white p-4 rounded-[1.5rem] rounded-tl-none max-w-[85%] text-sm animate-fade-in-up">
-                      {t.leadMagnet.msg1}
-                    </div>
-                    
+                    <div className="bg-[#2c2c2e] text-white p-4 rounded-[1.5rem] rounded-tl-none max-w-[85%] text-sm animate-fade-in-up">{t.leadMagnet.msg1}</div>
                     <div className="flex justify-end animate-fade-in-up" style={{ animationDelay: '500ms' }}>
-                      <div className="bg-brand-600 text-white p-3 rounded-[1.5rem] rounded-tr-none text-sm font-medium">
-                        {t.leadMagnet.btnMsg}
-                      </div>
+                      <div className="bg-brand-600 text-white p-3 rounded-[1.5rem] rounded-tr-none text-sm font-medium">{t.leadMagnet.btnMsg}</div>
                     </div>
-
                     <div className="bg-[#2c2c2e] text-white p-5 rounded-[2rem] rounded-tl-none max-w-[90%] space-y-4 animate-fade-in-up shadow-lg border border-white/5" style={{ animationDelay: '1000ms' }}>
                       <p className="text-sm">{t.leadMagnet.msg2} 🎁</p>
                       <div className="bg-white/5 p-4 rounded-2xl flex items-center space-x-4 border border-white/10 group/file cursor-pointer hover:bg-white/10 transition-colors">
-                        <div className="w-12 h-12 bg-brand-600/20 text-brand-500 rounded-xl flex items-center justify-center">
-                          <FileText size={24} />
-                        </div>
+                        <div className="w-12 h-12 bg-brand-600/20 text-brand-500 rounded-xl flex items-center justify-center"><FileText size={24} /></div>
                         <div className="flex-grow">
                           <div className="text-xs font-bold text-white mb-0.5">{t.leadMagnet.fileLabel}</div>
                           <div className="text-[10px] text-stone-500 font-medium">PDF • 4.2 MB</div>
@@ -834,8 +881,6 @@ const BurnoutLanding = () => {
                     </div>
                   </div>
                 </div>
-                
-                {/* Floating Decoration */}
                 <div className="absolute -top-6 -right-6 w-20 h-20 bg-brand-500 rounded-2xl shadow-2xl flex items-center justify-center text-white rotate-12 animate-float">
                   <Gift size={32} />
                 </div>
@@ -855,112 +900,80 @@ const BurnoutLanding = () => {
              <Download size={20} />
              <span className="text-lg">{t.download.button}</span>
            </a>
-           <div className="mt-24 pt-12 border-t border-white/5 text-stone-700 text-[10px] font-bold uppercase tracking-[0.3em]">
-             &copy; 2026 Burnout Lab Japan • Engineering Better Living
-           </div>
+           <div className="mt-24 pt-12 border-t border-white/5 text-stone-700 text-[10px] font-bold uppercase tracking-[0.3em]">&copy; 2026 Burnout Lab Japan • Engineering Better Living</div>
         </Reveal>
       </footer>
 
-      {/* Assistive Tools */}
       <VoiceAssistant show={scrollY > 300} />
 
-      {/* Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6">
-          <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={() => setIsModalOpen(false)} />
-          <div className="relative bg-white dark:bg-stone-900 p-10 md:p-14 rounded-[3.5rem] w-full max-w-md shadow-2xl animate-fade-in-up">
-            <button onClick={() => setIsModalOpen(false)} aria-label="Close" className="absolute top-8 right-8 dark:text-white text-stone-400 hover:text-brand-600 transition-colors"><X size={28} /></button>
-            
-            {submitStatus === 'success' ? (
-              <div className="text-center py-6 animate-fade-in-up">
-                <div className="relative mb-10">
-                  <div className="absolute inset-0 bg-brand-500/20 blur-3xl rounded-full scale-150 animate-pulse" />
-                  <CheckCircle size={96} className="text-green-500 mx-auto relative z-10 animate-bounce" />
-                </div>
-                <h3 className="text-4xl font-serif dark:text-white mb-4 tracking-tight">{t.modal.success}</h3>
-                <p className="text-stone-500 dark:text-stone-400 text-sm mb-10 leading-relaxed px-4">{t.modal.confirmMsg}</p>
-                
-                <div className="bg-stone-50 dark:bg-stone-800/50 border border-stone-200 dark:border-stone-700 p-6 rounded-3xl mb-4 relative group">
-                  <p className="text-[10px] font-bold text-stone-400 tracking-[0.2em] mb-2 uppercase">{t.modal.refLabel}</p>
-                  <div className="text-3xl font-mono font-bold dark:text-white tracking-widest flex items-center justify-center space-x-3">
-                    <span>{refNumber}</span>
-                    <button 
-                      onClick={() => navigator.clipboard.writeText(refNumber)}
-                      className="p-2 text-stone-400 hover:text-brand-600 transition-colors"
-                      title="Copy Reference"
-                    >
-                      <Copy size={18} />
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="w-full bg-stone-100 dark:bg-stone-800 h-1.5 rounded-full mt-10 overflow-hidden">
-                  <div className="bg-brand-500 h-full animate-[grow_6s_linear_forwards]" />
-                </div>
+      {/* Booking Modal */}
+      <ModalOverlay isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} contentClassName="w-full max-w-md bg-white dark:bg-stone-900 rounded-[3.5rem] shadow-2xl overflow-hidden p-10 md:p-14">
+        <button onClick={() => setIsModalOpen(false)} aria-label="Close" className="absolute top-8 right-8 dark:text-white text-stone-400 hover:text-brand-600 transition-colors z-20"><X size={28} /></button>
+        {submitStatus === 'success' ? (
+          <div className="text-center py-6">
+            <Confetti />
+            <div className="relative mb-8">
+              <div className="absolute inset-0 bg-brand-500/20 blur-3xl rounded-full scale-150 animate-pulse" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-24 h-24 mx-auto text-green-500 relative z-10">
+                <circle cx="12" cy="12" r="10" className="animate-draw" style={{ strokeDasharray: 100, animationDelay: '0s' }} />
+                <path d="m9 12 2 2 4-4" className="animate-draw" style={{ strokeDasharray: 100, animationDelay: '0.4s' }} />
+              </svg>
+            </div>
+            <h3 className="text-4xl font-serif dark:text-white mb-4 tracking-tight animate-fade-in-up" style={{ animationDelay: '0.6s' }}>{t.modal.success}</h3>
+            <p className="text-stone-500 dark:text-stone-400 text-sm mb-10 leading-relaxed px-4 animate-fade-in-up" style={{ animationDelay: '0.7s' }}>{t.modal.confirmMsg}</p>
+            <div className="bg-stone-50 dark:bg-stone-800/50 border border-stone-200 dark:border-stone-700 p-6 rounded-3xl mb-4 relative group animate-subtle-bounce" style={{ animationDelay: '0.8s' }}>
+              <p className="text-[10px] font-bold text-stone-400 tracking-[0.2em] mb-2 uppercase">{t.modal.refLabel}</p>
+              <div className="text-3xl font-mono font-bold dark:text-white tracking-widest flex items-center justify-center space-x-3">
+                <span>{refNumber}</span>
+                <button onClick={() => navigator.clipboard.writeText(refNumber)} className="p-2 text-stone-400 hover:text-brand-600 transition-colors" title="Copy Reference"><Copy size={18} /></button>
               </div>
-            ) : (
-              <>
-                <h3 className="text-4xl font-serif dark:text-white mb-3 tracking-tight">{t.modal.title}</h3>
-                <p className="text-stone-500 dark:text-stone-400 text-sm mb-10 leading-relaxed">{t.modal.desc}</p>
-                <form onSubmit={handleApply} className="space-y-6">
-                  <div className="space-y-1">
-                    <input name="user-name" required className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl p-5 focus:ring-2 focus:ring-brand-600 dark:text-white transition-all" placeholder={t.modal.nameLabel} />
-                  </div>
-                  <div className="space-y-1">
-                    <input name="user-phone" required type="tel" className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl p-5 focus:ring-2 focus:ring-brand-600 dark:text-white transition-all" placeholder={t.modal.phoneLabel} />
-                  </div>
-                  <div className="space-y-1">
-                    <select name="accommodation-type" className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl p-5 focus:ring-2 focus:ring-brand-600 dark:text-white transition-all cursor-pointer">
-                      <option value="Single">Single Suite</option>
-                      <option value="Shared">Shared Room</option>
-                    </select>
-                  </div>
-                  <button 
-                    disabled={isSubmitting || submitStatus !== 'idle'} 
-                    className={`w-full py-5 rounded-2xl font-bold shadow-xl flex items-center justify-center space-x-3 transition-all duration-500 text-lg 
-                      ${submitStatus === 'idle' ? 'bg-brand-600 hover:bg-brand-700 active:scale-95' : ''}
-                      ${submitStatus === 'error' ? 'bg-red-600 animate-shake' : ''}
-                      text-white disabled:opacity-70 disabled:cursor-not-allowed`}
-                  >
-                    {isSubmitting ? (
-                      <Loader2 className="animate-spin" size={24} />
-                    ) : submitStatus === 'error' ? (
-                      <div className="flex items-center space-x-2">
-                        <AlertCircle size={24} />
-                        <span>Error</span>
-                      </div>
-                    ) : (
-                      <span>{t.modal.submit}</span>
-                    )}
-                  </button>
-                </form>
-              </>
-            )}
+            </div>
+            <div className="w-full bg-stone-100 dark:bg-stone-800 h-1.5 rounded-full mt-10 overflow-hidden">
+              <div className="bg-brand-500 h-full animate-[grow_6s_linear_forwards]" />
+            </div>
           </div>
-        </div>
-      )}
+        ) : (
+          <>
+            <h3 className="text-4xl font-serif dark:text-white mb-3 tracking-tight">{t.modal.title}</h3>
+            <p className="text-stone-500 dark:text-stone-400 text-sm mb-10 leading-relaxed">{t.modal.desc}</p>
+            <form onSubmit={handleApply} className="space-y-6">
+              <div className="space-y-1 opacity-0 animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+                <input name="user-name" required className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl p-5 focus:ring-2 focus:ring-brand-600 dark:text-white transition-all" placeholder={t.modal.nameLabel} />
+              </div>
+              <div className="space-y-1 opacity-0 animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+                <input name="user-phone" required type="tel" className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl p-5 focus:ring-2 focus:ring-brand-600 dark:text-white transition-all" placeholder={t.modal.phoneLabel} />
+              </div>
+              <div className="space-y-1 opacity-0 animate-fade-in-up" style={{ animationDelay: '300ms' }}>
+                <select name="accommodation-type" className="w-full bg-stone-50 dark:bg-stone-800 border-none rounded-2xl p-5 focus:ring-2 focus:ring-brand-600 dark:text-white transition-all cursor-pointer">
+                  <option value="Single">Single Suite</option>
+                  <option value="Shared">Shared Room</option>
+                </select>
+              </div>
+              <button disabled={isSubmitting || submitStatus !== 'idle'} className={`w-full py-5 rounded-2xl font-bold shadow-xl flex items-center justify-center space-x-3 transition-all duration-500 text-lg opacity-0 animate-fade-in-up ${submitStatus === 'idle' ? 'bg-brand-600 hover:bg-brand-700 active:scale-95' : ''} ${submitStatus === 'error' ? 'bg-red-600 animate-shake' : ''} text-white disabled:opacity-70 disabled:cursor-not-allowed`} style={{ animationDelay: '400ms' }}>
+                {isSubmitting ? <Loader2 className="animate-spin" size={24} /> : submitStatus === 'error' ? <div className="flex items-center space-x-2"><AlertCircle size={24} /><span>Error</span></div> : <span>{t.modal.submit}</span>}
+              </button>
+            </form>
+          </>
+        )}
+      </ModalOverlay>
 
       {/* Video Modal */}
-      {isVideoOpen && (
-        <div className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-xl flex items-center justify-center p-4">
-          <button onClick={() => setIsVideoOpen(false)} aria-label="Close" className="absolute top-10 right-10 text-white/50 hover:text-white p-4 transition-colors"><X size={36} /></button>
-          <video controls autoPlay className="w-full max-w-6xl aspect-video rounded-[2rem] shadow-[0_0_100px_rgba(244,63,94,0.3)] border border-white/10">
-            <source src={ASSETS.FILM_VIDEO} />
-          </video>
-        </div>
-      )}
+      <ModalOverlay isOpen={isVideoOpen} onClose={() => setIsVideoOpen(false)} contentClassName="w-full max-w-6xl aspect-video rounded-[2rem] shadow-[0_0_100px_rgba(244,63,94,0.3)] border border-white/10 bg-black relative" backdropClassName="bg-black/95 backdrop-blur-xl">
+        <button onClick={() => setIsVideoOpen(false)} aria-label="Close" className="absolute -top-12 -right-2 text-white/50 hover:text-white p-2 transition-colors z-20"><X size={36} /></button>
+        <video controls autoPlay className="w-full h-full rounded-[2rem]">
+          <source src={ASSETS.FILM_VIDEO} />
+        </video>
+      </ModalOverlay>
     </div>
   );
-};
+}
 
 // --- HELPERS ---
 
 const Preloader = () => (
   <div className="fixed inset-0 z-[300] bg-stone-950 flex flex-col items-center justify-center animate-fade-out" style={{ animationDelay: '1.2s' }}>
     <Brain size={80} className="text-brand-600 animate-pulse-slow mb-8" />
-    <h2 className="text-white font-serif tracking-[0.5em] uppercase text-2xl">
-      Burnout<span className="text-brand-600 italic">Lab</span>
-    </h2>
+    <h2 className="text-white font-serif tracking-[0.5em] uppercase text-2xl">Burnout<span className="text-brand-600 italic">Lab</span></h2>
     <div className="w-48 h-[1px] bg-white/10 mt-12 overflow-hidden relative">
       <div className="absolute inset-0 bg-brand-600 animate-grow" />
     </div>
@@ -985,5 +998,3 @@ const ScrollProgress = () => {
   }, []);
   return <div className="fixed top-0 left-0 h-1 bg-brand-600 z-[110] transition-all duration-200" style={{ width: `${w}%` }} />;
 };
-
-export default BurnoutLanding;
