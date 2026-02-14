@@ -689,9 +689,11 @@ export default function App() {
         <Reveal direction="up" distance={40} delay={1400}>
           <div className="bg-white dark:bg-stone-900 rounded-[2.5rem] md:rounded-[4rem] shadow-2xl overflow-hidden border border-stone-100 dark:border-stone-800 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-stone-100 dark:divide-stone-800">
             {t.stats.map((stat, i) => (
-              <div key={i} className="p-8 md:p-12 text-center group hover:bg-stone-50 dark:hover:bg-stone-800/50 transition-colors">
-                <div className="text-4xl md:text-6xl font-serif font-bold text-stone-900 dark:text-white mb-3 group-hover:text-brand-600 transition-colors">{stat.value}</div>
-                <div className="text-[10px] md:text-[11px] font-bold text-stone-400 dark:text-stone-500 tracking-[0.3em] uppercase">{stat.label}</div>
+              <div key={i} className="p-8 md:p-12 text-center group hover:bg-stone-50 dark:hover:bg-stone-800/50 transition-colors cursor-default">
+                <div className="transition-all duration-300 ease-out group-hover:scale-110 group-hover:drop-shadow-lg">
+                  <div className="text-4xl md:text-6xl font-serif font-bold text-stone-900 dark:text-white mb-3 group-hover:text-brand-600 transition-colors">{stat.value}</div>
+                  <div className="text-[10px] md:text-[11px] font-bold text-stone-400 dark:text-stone-500 tracking-[0.3em] uppercase">{stat.label}</div>
+                </div>
               </div>
             ))}
           </div>
