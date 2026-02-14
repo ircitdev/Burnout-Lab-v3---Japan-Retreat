@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, Modality, LiveServerMessage } from "@google/genai";
 import { 
   Calendar, Users, Brain, CheckCircle, Menu, X, Moon, Sun, Play, Download, 
   Feather, Send, FileText, Activity, Loader2, Mic, Sparkles, Quote, AlertCircle, Copy, MessageSquare, Gift, FileDown,
@@ -146,11 +145,23 @@ function useIntersectionObserver(options: IntersectionObserverInit & { triggerOn
 
 function useScrollPos() {
   const [scrollPos, setScrollPos] = useState(0);
+  
   useEffect(() => {
-    const handleScroll = () => setScrollPos(window.scrollY);
+    let ticking = false;
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setScrollPos(window.scrollY);
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+    
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+  
   return scrollPos;
 }
 
@@ -209,7 +220,8 @@ const Reveal: React.FC<{ children: React.ReactNode; delay?: number; className?: 
   return (
     <div 
       ref={ref as any}
-      className={`transition-all duration-[1000ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] ${className}`}
+      // Added will-change-transform for optimized compositing
+      className={`transition-all duration-[1000ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] will-change-transform ${className}`}
       style={{ 
         opacity: isVisible ? 1 : 0, 
         transform: getTransform(),
@@ -217,6 +229,57 @@ const Reveal: React.FC<{ children: React.ReactNode; delay?: number; className?: 
       }}
     >
       {children}
+    </div>
+  );
+};
+
+const ParallaxImage: React.FC<{ src: string; alt: string }> = ({ src, alt }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let rafId: number;
+    
+    const update = () => {
+      const container = containerRef.current;
+      const wrapper = wrapperRef.current;
+      
+      if (container && wrapper) {
+        const rect = container.getBoundingClientRect();
+        const viewportHeight = window.innerHeight;
+        
+        // Check if visible
+        if (rect.top < viewportHeight && rect.bottom > 0) {
+          // Calculate distance from center for subtle parallax
+          const distanceFromCenter = rect.top + rect.height / 2 - viewportHeight / 2;
+          
+          // Parallax Factor (0.08 is subtle)
+          const y = distanceFromCenter * 0.08;
+          
+          wrapper.style.transform = `translateY(${y}px)`;
+        }
+      }
+      rafId = requestAnimationFrame(update);
+    };
+
+    update();
+    return () => cancelAnimationFrame(rafId);
+  }, []);
+
+  return (
+    <div 
+      ref={containerRef} 
+      className="relative mx-auto w-full aspect-[4/5] rounded-[2.5rem] overflow-hidden shadow-xl border-4 border-white dark:border-stone-900 bg-stone-200 dark:bg-stone-800 grayscale hover:grayscale-0 transition-all duration-700"
+    >
+      <div ref={wrapperRef} className="w-full h-[120%] -mt-[10%] will-change-transform">
+        <img 
+          src={src} 
+          alt={alt} 
+          loading="lazy" 
+          decoding="async" 
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000 ease-out" 
+        />
+      </div>
     </div>
   );
 };
@@ -244,6 +307,9 @@ const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
     if (!process.env.API_KEY) { setError("API Key missing"); return; }
     setIsConnecting(true); setError(null);
     try {
+      // Dynamic import to avoid loading heavy SDK on initial page load
+      const { GoogleGenAI, Modality } = await import("@google/genai");
+      
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const inputCtx = new AudioContext({ sampleRate: 16000 });
@@ -268,7 +334,7 @@ const VoiceAssistant: React.FC<{ show: boolean }> = ({ show }) => {
             };
             source.connect(processor); processor.connect(inputCtx.destination);
           },
-          onmessage: async (msg: LiveServerMessage) => {
+          onmessage: async (msg: any) => { // Type cast to any to support dynamic import
             if (msg.serverContent?.interrupted) {
               for (const source of audioRefs.current.sources.values()) {
                 try { source.stop(); } catch {}
@@ -340,6 +406,7 @@ const BurnoutLanding = () => {
   const t = TRANSLATIONS.EN;
 
   useEffect(() => {
+    // Simulated loading time to ensure critical assets have a moment, but keep it snappy
     const timer = setTimeout(() => setIsLoading(false), 1500);
     return () => clearTimeout(timer);
   }, []);
@@ -402,7 +469,7 @@ const BurnoutLanding = () => {
       <ScrollProgress />
       
       {/* Navigation */}
-      <nav className={`fixed w-full z-[100] transition-all duration-500 ${scrollY > 50 || isMenuOpen ? 'bg-white/95 dark:bg-stone-950/95 backdrop-blur-md py-3 shadow-sm border-b dark:border-stone-800' : 'bg-transparent py-6'}`}>
+      <nav className={`fixed w-full z-[100] transition-all duration-500 ${scrollY > 50 && !isMenuOpen ? 'bg-white/95 dark:bg-stone-950/95 backdrop-blur-md py-3 shadow-sm border-b dark:border-stone-800' : 'bg-transparent py-6'}`}>
         <div className="max-w-7xl mx-auto px-6 flex justify-between items-center relative">
           <a href="#" className="font-serif text-2xl font-bold dark:text-white tracking-tight z-[110]">
             Burnout<span className="text-brand-600 italic">Lab</span>
@@ -492,40 +559,41 @@ const BurnoutLanding = () => {
       {/* Hero Section */}
       <header className="relative h-screen flex flex-col items-center justify-center overflow-hidden">
         <video autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover">
-          <source src={window.innerWidth < 768 ? ASSETS.VIDEO_MOBILE : ASSETS.VIDEO_BG} />
+          <source src={ASSETS.VIDEO_MOBILE} media="(max-width: 767px)" type="video/mp4" />
+          <source src={ASSETS.VIDEO_BG} media="(min-width: 768px)" type="video/mp4" />
         </video>
         <div className="absolute inset-0 bg-black/45 dark:bg-black/70 z-10" />
         
         <div className="relative z-20 text-center px-6 max-w-4xl pt-16">
-          <Reveal direction="down" distance={40} delay={100}>
+          <Reveal direction="down" distance={20} delay={100}>
             <span className="inline-block px-5 py-2 bg-white/10 backdrop-blur-lg border border-white/20 rounded-full text-white text-[11px] font-bold mb-10 uppercase tracking-[0.2em] shadow-lg">
               {t.hero.date}
             </span>
           </Reveal>
-          <Reveal delay={400} direction="up" distance={60} className="mb-8">
+          <Reveal delay={300} direction="up" distance={30} className="mb-8">
             <h1 className="text-4xl md:text-8xl font-serif text-white leading-[1.1] tracking-tight drop-shadow-2xl">
               {t.hero.titlePrefix} <br/><span className="italic text-brand-200 font-light">{t.hero.titleHighlight}</span>
             </h1>
           </Reveal>
-          <Reveal delay={700} direction="up" distance={40} className="mb-14">
+          <Reveal delay={500} direction="up" distance={20} className="mb-14">
             <p className="text-lg md:text-2xl text-stone-200 font-light max-w-2xl mx-auto leading-relaxed drop-shadow-md">
               {t.hero.desc}
             </p>
           </Reveal>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-8">
-            <Reveal delay={1000} direction="scale">
+            <Reveal delay={700} direction="up" distance={20}>
               <button 
                 onClick={() => setIsModalOpen(true)} 
-                className="w-full sm:w-auto px-12 py-5 bg-brand-600 text-white rounded-full font-bold shadow-2xl hover:bg-brand-700 hover:-translate-y-1 active:scale-95 transition-all animate-soft-pulse"
+                className="w-full sm:w-auto px-12 py-5 bg-brand-600 text-white rounded-full font-bold shadow-2xl hover:bg-brand-700 hover:-translate-y-1 active:scale-95 transition-all animate-pulse-glow"
               >
                 {t.hero.ctaApply}
               </button>
             </Reveal>
-            <Reveal delay={1200} direction="scale">
+            <Reveal delay={850} direction="up" distance={20}>
               <button 
                 onClick={() => setIsVideoOpen(true)} 
                 className="flex items-center space-x-4 text-white font-medium hover:text-brand-200 transition-all group animate-soft-pulse"
-                style={{ animationDelay: '0.5s' }}
+                style={{ animationDelay: '1s' }}
               >
                 <span className="w-14 h-14 rounded-full border border-white/30 bg-white/5 backdrop-blur-sm flex items-center justify-center group-hover:bg-white group-hover:text-black transition-all shadow-lg scale-100 group-hover:scale-110">
                   <Play size={18} fill="currentColor" />
@@ -551,7 +619,148 @@ const BurnoutLanding = () => {
         </Reveal>
       </section>
 
-      {/* Restored Free Lead Magnet Section */}
+      {/* About Section */}
+      <section id="about" className="py-32 px-6 bg-stone-50 dark:bg-stone-950">
+        <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-20 items-center">
+          <Reveal direction="left">
+            <div className="space-y-10">
+              <div className="flex items-center space-x-4">
+                <div className="h-[2px] w-12 bg-brand-600" />
+                <span className="text-xs font-bold text-brand-600 tracking-[0.2em] uppercase">{t.about.philosophy}</span>
+              </div>
+              <h2 className="text-4xl md:text-6xl font-serif dark:text-white leading-[1.15]">{t.about.title}</h2>
+              <p className="text-lg md:text-xl text-stone-600 dark:text-stone-400 leading-relaxed font-light">{t.about.desc}</p>
+              <div className="space-y-8 pt-4">
+                 {[ 
+                   { icon: Brain, title: t.about.neuroTitle, desc: t.about.neuroDesc },
+                   { icon: Activity, title: t.about.toolsTitle, desc: t.about.toolsDesc } 
+                 ].map((feat, idx) => (
+                   <div key={idx} className="flex space-x-8 group">
+                     <div className="w-14 h-14 bg-white dark:bg-stone-900 rounded-2xl flex items-center justify-center shrink-0 shadow-md border border-stone-100 dark:border-stone-800 group-hover:border-brand-300 transition-colors">
+                       <feat.icon className="text-brand-600" size={26} />
+                     </div>
+                     <div>
+                       <h4 className="font-bold dark:text-white mb-2 text-lg">{feat.title}</h4>
+                       <p className="text-sm text-stone-500 dark:text-stone-400 leading-relaxed">{feat.desc}</p>
+                     </div>
+                   </div>
+                 ))}
+              </div>
+            </div>
+          </Reveal>
+          <Reveal direction="right" className="relative">
+            <div className="rounded-[4rem] overflow-hidden shadow-2xl aspect-[4/5] relative group border-8 border-white dark:border-stone-900">
+              <img src={ASSETS.ABOUT_IMG} loading="lazy" decoding="async" alt="Japan Retreat" className="w-full h-full object-cover transition-transform duration-[2000ms] group-hover:scale-110" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-80" />
+              
+              <div className="absolute bottom-10 inset-x-8 md:inset-x-12 p-6 md:p-8 bg-black/40 backdrop-blur-md rounded-[2.5rem] border border-white/10 shadow-2xl">
+                <p className="text-white font-serif italic text-xl md:text-2xl text-center leading-relaxed drop-shadow-md">
+                  {t.about.imageQuote}
+                </p>
+              </div>
+            </div>
+            
+            <div className="absolute -bottom-10 -left-6 p-8 bg-white/95 dark:bg-stone-900/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-stone-100 dark:border-stone-800 animate-float z-30">
+               <div className="text-[10px] font-bold text-stone-400 tracking-[0.2em] mb-2 uppercase">{t.about.cortisolLevel}</div>
+               <div className="text-3xl font-bold text-brand-600 dark:text-brand-500">{t.about.cortisolChange}</div>
+               <div className="w-full bg-stone-100 dark:bg-stone-800 h-1 rounded-full mt-4 overflow-hidden">
+                  <div className="bg-brand-500 h-full w-[45%] rounded-full" />
+               </div>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* Schedule */}
+      <section id="schedule" className="py-32 bg-stone-100 dark:bg-stone-900/40 px-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-20">
+            <Reveal><h2 className="text-4xl md:text-6xl font-serif dark:text-white mb-6">{t.schedule.title}</h2></Reveal>
+            <Reveal delay={200}><p className="text-stone-500 dark:text-stone-400 text-lg md:text-xl font-light">{t.schedule.subtitle}</p></Reveal>
+          </div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-10">
+            {t.schedule.days.map((d, i) => (
+              <Reveal key={i} delay={i * 150}>
+                <div className="p-12 bg-white dark:bg-stone-900 rounded-[3.5rem] h-full border border-stone-100 dark:border-stone-800 hover:border-brand-500/30 transition-all duration-500 group relative overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-2">
+                  <span className="absolute -top-4 -right-2 text-[140px] font-serif font-black text-stone-200/60 dark:text-stone-700/50 leading-none select-none group-hover:text-brand-500/10 transition-colors z-0">
+                    {d.ghost}
+                  </span>
+                  <div className="relative z-10 space-y-8">
+                    <span className="inline-block px-4 py-1.5 bg-brand-50 dark:bg-brand-900/20 text-[10px] font-bold text-brand-600 tracking-[0.2em] rounded-full uppercase">
+                      {d.day}
+                    </span>
+                    <h3 className="text-2xl font-serif dark:text-white leading-tight group-hover:text-brand-600 transition-colors">{d.title}</h3>
+                    <p className="text-sm text-stone-500 dark:text-stone-400 leading-relaxed font-light">{d.desc}</p>
+                  </div>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Mentors */}
+      <section id="team" className="py-32 px-6 bg-white dark:bg-stone-950">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-20">
+            <Reveal><h2 className="text-4xl md:text-6xl font-serif dark:text-white mb-6">{t.team.title}</h2></Reveal>
+            <Reveal delay={200}><p className="text-stone-500 dark:text-stone-400 text-lg font-light">{t.team.subtitle}</p></Reveal>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-8">
+            {t.team.coaches.map((coach, i) => (
+              <Reveal key={i} delay={i * 150} direction="up" distance={40}>
+                <div className="group text-center space-y-6">
+                  <ParallaxImage src={ASSETS.COACHES[i]} alt={coach.name} />
+                  <div className="space-y-2">
+                    <h4 className="text-xl font-serif dark:text-white leading-tight">{coach.name}</h4>
+                    <p className="text-brand-600 dark:text-brand-500 text-[10px] font-bold uppercase tracking-widest">{coach.role}</p>
+                    <p className="text-xs text-stone-500 dark:text-stone-400 max-w-xs mx-auto leading-relaxed px-2">{coach.desc}</p>
+                  </div>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing */}
+      <section id="pricing" className="py-32 px-6 bg-stone-50 dark:bg-stone-900/20">
+        <div className="max-w-7xl mx-auto">
+           <div className="text-center mb-20">
+            <Reveal><h2 className="text-4xl md:text-6xl font-serif dark:text-white mb-6">{t.pricing.title}</h2></Reveal>
+            <Reveal delay={200}><p className="text-stone-500 dark:text-stone-400 text-lg font-light">{t.pricing.subtitle}</p></Reveal>
+          </div>
+          <div className="grid md:grid-cols-2 gap-12 max-w-5xl mx-auto">
+            <Reveal direction="left">
+               <div className="p-12 bg-white dark:bg-stone-900 rounded-[4rem] border border-stone-200 dark:border-stone-800 transition-all hover:shadow-xl flex flex-col h-full">
+                 <h3 className="text-2xl font-bold dark:text-white mb-4">{t.pricing.shared}</h3>
+                 <div className="text-5xl font-serif mb-10 dark:text-white">$2,390</div>
+                 <ul className="space-y-5 mb-12 flex-grow">
+                   {t.pricing.features.slice(0,4).map((f, i) => (
+                     <li key={i} className="flex items-center text-sm text-stone-600 dark:text-stone-400"><CheckCircle size={18} className="text-brand-600 mr-4" />{f}</li>
+                   ))}
+                 </ul>
+                 <button onClick={() => setIsModalOpen(true)} className="w-full py-5 rounded-2xl bg-stone-50 dark:bg-stone-800 dark:text-white font-bold hover:bg-brand-600 hover:text-white transition-all active:scale-95">Select Plan</button>
+               </div>
+            </Reveal>
+            <Reveal direction="right">
+               <div className="p-12 bg-stone-900 dark:bg-stone-800 text-white rounded-[4rem] shadow-2xl relative overflow-hidden flex flex-col h-full">
+                 <div className="absolute top-0 right-0 px-6 py-2 bg-brand-600 text-[10px] font-bold uppercase tracking-widest rounded-bl-3xl">{t.pricing.popular}</div>
+                 <h3 className="text-2xl font-bold mb-4">{t.pricing.single}</h3>
+                 <div className="text-5xl font-serif mb-10">$2,890</div>
+                 <ul className="space-y-5 mb-12 flex-grow">
+                   {t.pricing.features.map((f, i) => (
+                     <li key={i} className="flex items-center text-sm text-stone-300"><CheckCircle size={18} className="text-brand-600 mr-4" />{f}</li>
+                   ))}
+                 </ul>
+                 <button onClick={() => setIsModalOpen(true)} className="w-full py-5 rounded-2xl bg-brand-600 text-white font-bold hover:bg-brand-700 transition-all active:scale-95">Book Now</button>
+               </div>
+            </Reveal>
+          </div>
+        </div>
+      </section>
+
+      {/* Free Lead Magnet Section - Moved here */}
       <section className="py-32 px-6">
         <Reveal direction="up" distance={60}>
           <div className="max-w-7xl mx-auto bg-gradient-to-br from-[#4b1d8e] via-[#6d1a92] to-[#b61545] rounded-[3rem] md:rounded-[5rem] overflow-hidden shadow-[0_40px_100px_-20px_rgba(75,29,142,0.4)] relative border border-white/10 group">
@@ -634,149 +843,6 @@ const BurnoutLanding = () => {
             </div>
           </div>
         </Reveal>
-      </section>
-
-      {/* About Section */}
-      <section id="about" className="py-32 px-6 bg-stone-50 dark:bg-stone-950">
-        <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-20 items-center">
-          <Reveal direction="left">
-            <div className="space-y-10">
-              <div className="flex items-center space-x-4">
-                <div className="h-[2px] w-12 bg-brand-600" />
-                <span className="text-xs font-bold text-brand-600 tracking-[0.2em] uppercase">{t.about.philosophy}</span>
-              </div>
-              <h2 className="text-4xl md:text-6xl font-serif dark:text-white leading-[1.15]">{t.about.title}</h2>
-              <p className="text-lg md:text-xl text-stone-600 dark:text-stone-400 leading-relaxed font-light">{t.about.desc}</p>
-              <div className="space-y-8 pt-4">
-                 {[ 
-                   { icon: Brain, title: t.about.neuroTitle, desc: t.about.neuroDesc },
-                   { icon: Activity, title: t.about.toolsTitle, desc: t.about.toolsDesc } 
-                 ].map((feat, idx) => (
-                   <div key={idx} className="flex space-x-8 group">
-                     <div className="w-14 h-14 bg-white dark:bg-stone-900 rounded-2xl flex items-center justify-center shrink-0 shadow-md border border-stone-100 dark:border-stone-800 group-hover:border-brand-300 transition-colors">
-                       <feat.icon className="text-brand-600" size={26} />
-                     </div>
-                     <div>
-                       <h4 className="font-bold dark:text-white mb-2 text-lg">{feat.title}</h4>
-                       <p className="text-sm text-stone-500 dark:text-stone-400 leading-relaxed">{feat.desc}</p>
-                     </div>
-                   </div>
-                 ))}
-              </div>
-            </div>
-          </Reveal>
-          <Reveal direction="right" className="relative">
-            <div className="rounded-[4rem] overflow-hidden shadow-2xl aspect-[4/5] relative group border-8 border-white dark:border-stone-900">
-              <img src={ASSETS.ABOUT_IMG} alt="Japan Retreat" className="w-full h-full object-cover transition-transform duration-[2000ms] group-hover:scale-110" loading="lazy" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-80" />
-              
-              <div className="absolute bottom-10 inset-x-8 md:inset-x-12 p-6 md:p-8 bg-black/40 backdrop-blur-md rounded-[2.5rem] border border-white/10 shadow-2xl">
-                <p className="text-white font-serif italic text-xl md:text-2xl text-center leading-relaxed drop-shadow-md">
-                  {t.about.imageQuote}
-                </p>
-              </div>
-            </div>
-            
-            <div className="absolute -bottom-10 -left-6 p-8 bg-white/95 dark:bg-stone-900/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-stone-100 dark:border-stone-800 animate-float z-30">
-               <div className="text-[10px] font-bold text-stone-400 tracking-[0.2em] mb-2 uppercase">{t.about.cortisolLevel}</div>
-               <div className="text-3xl font-bold text-brand-600 dark:text-brand-500">{t.about.cortisolChange}</div>
-               <div className="w-full bg-stone-100 dark:bg-stone-800 h-1 rounded-full mt-4 overflow-hidden">
-                  <div className="bg-brand-500 h-full w-[45%] rounded-full" />
-               </div>
-            </div>
-          </Reveal>
-        </div>
-      </section>
-
-      {/* Schedule */}
-      <section id="schedule" className="py-32 bg-stone-100 dark:bg-stone-900/40 px-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-20">
-            <Reveal><h2 className="text-4xl md:text-6xl font-serif dark:text-white mb-6">{t.schedule.title}</h2></Reveal>
-            <Reveal delay={200}><p className="text-stone-500 dark:text-stone-400 text-lg md:text-xl font-light">{t.schedule.subtitle}</p></Reveal>
-          </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-10">
-            {t.schedule.days.map((d, i) => (
-              <Reveal key={i} delay={i * 150}>
-                <div className="p-12 bg-white dark:bg-stone-900 rounded-[3.5rem] h-full border border-stone-100 dark:border-stone-800 hover:border-brand-500/30 transition-all duration-500 group relative overflow-hidden shadow-sm hover:shadow-2xl hover:-translate-y-2">
-                  <span className="absolute -top-4 -right-2 text-[140px] font-serif font-black text-stone-200/60 dark:text-stone-700/50 leading-none select-none group-hover:text-brand-500/10 transition-colors z-0">
-                    {d.ghost}
-                  </span>
-                  <div className="relative z-10 space-y-8">
-                    <span className="inline-block px-4 py-1.5 bg-brand-50 dark:bg-brand-900/20 text-[10px] font-bold text-brand-600 tracking-[0.2em] rounded-full uppercase">
-                      {d.day}
-                    </span>
-                    <h3 className="text-2xl font-serif dark:text-white leading-tight group-hover:text-brand-600 transition-colors">{d.title}</h3>
-                    <p className="text-sm text-stone-500 dark:text-stone-400 leading-relaxed font-light">{d.desc}</p>
-                  </div>
-                </div>
-              </Reveal>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Mentors */}
-      <section id="team" className="py-32 px-6 bg-white dark:bg-stone-950">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-20">
-            <Reveal><h2 className="text-4xl md:text-6xl font-serif dark:text-white mb-6">{t.team.title}</h2></Reveal>
-            <Reveal delay={200}><p className="text-stone-500 dark:text-stone-400 text-lg font-light">{t.team.subtitle}</p></Reveal>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-8">
-            {t.team.coaches.map((coach, i) => (
-              <Reveal key={i} delay={i * 150} direction="up" distance={40}>
-                <div className="group text-center space-y-6">
-                  <div className="relative mx-auto w-full aspect-[4/5] rounded-[2.5rem] overflow-hidden shadow-xl grayscale hover:grayscale-0 transition-all duration-700 border-4 border-white dark:border-stone-900">
-                    <img src={ASSETS.COACHES[i]} alt={coach.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-1000" />
-                  </div>
-                  <div className="space-y-2">
-                    <h4 className="text-xl font-serif dark:text-white leading-tight">{coach.name}</h4>
-                    <p className="text-brand-600 dark:text-brand-500 text-[10px] font-bold uppercase tracking-widest">{coach.role}</p>
-                    <p className="text-xs text-stone-500 dark:text-stone-400 max-w-xs mx-auto leading-relaxed px-2">{coach.desc}</p>
-                  </div>
-                </div>
-              </Reveal>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Pricing */}
-      <section id="pricing" className="py-32 px-6 bg-stone-50 dark:bg-stone-900/20">
-        <div className="max-w-7xl mx-auto">
-           <div className="text-center mb-20">
-            <Reveal><h2 className="text-4xl md:text-6xl font-serif dark:text-white mb-6">{t.pricing.title}</h2></Reveal>
-            <Reveal delay={200}><p className="text-stone-500 dark:text-stone-400 text-lg font-light">{t.pricing.subtitle}</p></Reveal>
-          </div>
-          <div className="grid md:grid-cols-2 gap-12 max-w-5xl mx-auto">
-            <Reveal direction="left">
-               <div className="p-12 bg-white dark:bg-stone-900 rounded-[4rem] border border-stone-200 dark:border-stone-800 transition-all hover:shadow-xl flex flex-col h-full">
-                 <h3 className="text-2xl font-bold dark:text-white mb-4">{t.pricing.shared}</h3>
-                 <div className="text-5xl font-serif mb-10 dark:text-white">$2,390</div>
-                 <ul className="space-y-5 mb-12 flex-grow">
-                   {t.pricing.features.slice(0,4).map((f, i) => (
-                     <li key={i} className="flex items-center text-sm text-stone-600 dark:text-stone-400"><CheckCircle size={18} className="text-brand-600 mr-4" />{f}</li>
-                   ))}
-                 </ul>
-                 <button onClick={() => setIsModalOpen(true)} className="w-full py-5 rounded-2xl bg-stone-50 dark:bg-stone-800 dark:text-white font-bold hover:bg-brand-600 hover:text-white transition-all active:scale-95">Select Plan</button>
-               </div>
-            </Reveal>
-            <Reveal direction="right">
-               <div className="p-12 bg-stone-900 dark:bg-stone-800 text-white rounded-[4rem] shadow-2xl relative overflow-hidden flex flex-col h-full">
-                 <div className="absolute top-0 right-0 px-6 py-2 bg-brand-600 text-[10px] font-bold uppercase tracking-widest rounded-bl-3xl">{t.pricing.popular}</div>
-                 <h3 className="text-2xl font-bold mb-4">{t.pricing.single}</h3>
-                 <div className="text-5xl font-serif mb-10">$2,890</div>
-                 <ul className="space-y-5 mb-12 flex-grow">
-                   {t.pricing.features.map((f, i) => (
-                     <li key={i} className="flex items-center text-sm text-stone-300"><CheckCircle size={18} className="text-brand-600 mr-4" />{f}</li>
-                   ))}
-                 </ul>
-                 <button onClick={() => setIsModalOpen(true)} className="w-full py-5 rounded-2xl bg-brand-600 text-white font-bold hover:bg-brand-700 transition-all active:scale-95">Book Now</button>
-               </div>
-            </Reveal>
-          </div>
-        </div>
       </section>
 
       {/* Footer */}
@@ -904,8 +970,18 @@ const Preloader = () => (
 const ScrollProgress = () => {
   const [w, setW] = useState(0);
   useEffect(() => {
-    const h = () => setW((window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100);
-    window.addEventListener('scroll', h); return () => window.removeEventListener('scroll', h);
+    let ticking = false;
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setW((window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100);
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
   return <div className="fixed top-0 left-0 h-1 bg-brand-600 z-[110] transition-all duration-200" style={{ width: `${w}%` }} />;
 };
